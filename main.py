@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timedelta
 streaming_duration = 10  # Stop stream after n seconds
 
+samples = []
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help="Include debug-level logs.")
@@ -97,6 +99,7 @@ if __name__ == "__main__":
         try:
             data = fConnector.data_q.get(True, 0.01)
 
+            samples.append(data)
             # Start the timer after the first data sample has been received
             if not start:
                 start = datetime.now()
