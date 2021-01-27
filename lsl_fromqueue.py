@@ -43,7 +43,7 @@ while True:
         logging.info("DATA %s" % samples)
 
         stamp = local_clock()
-        lsldata = [[ch_data['data'] for ch_data in samples.values()]]
+        lsldata = [[ch_data['data'] for ch_data in sample.values()] for sample in samples]
         outlet.push_chunk(lsldata, stamp)
 
         time.sleep(0.01)

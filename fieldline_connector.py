@@ -97,7 +97,6 @@ class FieldLineConnector(FieldLineCallback):
 
     # not necessarily required callback
     def callback_data_available(self, sample_list):
-        print("Data has been received")
         self.data_q.put(sample_list)
 
 
@@ -159,3 +158,7 @@ class FieldLineConnector(FieldLineCallback):
 
     def num_valid_sensors(self):
         return len(self.valid_sensors_list)
+
+    def empty_queue(self):
+        with self.data_q.mutex:
+            self.data_q.queue.clear()

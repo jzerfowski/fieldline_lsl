@@ -10,6 +10,8 @@ import sys
 import signal
 import sys
 
+from fllsl import FieldLineLSL
+
 from datetime import datetime, timedelta
 streaming_duration = 10  # Stop stream after n seconds
 
@@ -24,7 +26,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         format='%(asctime)s %(levelname)s %(threadName)s(%(process)d) %(message)s [%(filename)s:%(lineno)d]',
         datefmt='%m/%d/%Y %I:%M:%S %p',
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.WARNING,
         handlers=[stream_handler]
     )
     logging.info("Starting FieldLine service main")
@@ -71,8 +73,8 @@ if __name__ == "__main__":
             for c, s in sensors.items():
                 if not my_chassis:
                     my_chassis = c
-                    #logging.info("Starting ADC on chassis %d" % my_chassis)
-                    #fService.start_adc(c, 1000)
+                    # logging.info("Starting ADC on chassis %d" % my_chassis)
+                    # fService.start_adc(c, 1000)
                 logging.info("Chassis %d got new sensors %s" % (c, s))
                 for sensor in s:
                     fService.restart_sensor(c, sensor)
@@ -112,4 +114,39 @@ if __name__ == "__main__":
             continue
 
     # Stop streaming after streaming_duration to do some debugging
+    fService.stop_data()
+
+    adc = False
+    if adc:
+        fService.start_adc(0)
+
+    fService.start_data()
+    print("Starting data")
+
+    time.sleep(1)
+    with fConnector.data_q.mutex:
+        sample = fConnector.data_q.queue[-1][0]
+        fConnector.data_q.queue.clear()
+    outlet = FieldLineLSL(fConnector, sample, name='asdf', source_id='jkloe')
+
+    duration = 20
+    start = datetime.now()
+
+    samples_counter = 0
+
+    print("Start sending")
+    while timedelta(seconds=duration) > (datetime.now() - start):
+        try:
+            samples = fConnector.data_q.get(True, 0.001)
+            lsldata = [[ch_data['data'] for ch_data in sample.values()] for sample in samples]
+            outlet.push_chunk(lsldata)
+            samples_counter += len(samples)
+            print((datetime.now() - start).total_seconds())
+            print(f"{samples_counter/((datetime.now() - start).total_seconds()+0.001)} samples/second")
+        except queue.Empty:
+            continue
+    print("Stopping")
+
+    if adc:
+        fService.stop_adc(0)
     fService.stop_data()
