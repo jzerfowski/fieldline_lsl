@@ -11,6 +11,8 @@ import sys
 import signal
 import sys
 
+import numpy as np
+
 from datetime import datetime, timedelta
 
 from fieldline_connector import FieldLineConnector
@@ -44,11 +46,12 @@ def set_logging(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-v', '--verbose', action="count", help="verbose level... repeat up to three times.")
+    parser.add_argument('-v', '--verbose', action="count", default=0, help="verbose level... repeat up to three times.")
     parser.add_argument('-c', '--chassis', action='append', help='Connect to chassis ip. Can be omitted or given multiple times', required=False)
     parser.add_argument('--adc', action='store_true', default=False, help="Activate ADC Input")
     parser.add_argument('-n', '--sname', default='FieldLineOPM', help="Name of the LSL Stream")
     parser.add_argument('-id', '--sid', default='flopm', help="Unique ID of the LSL Stream")
+    parser.add_argument('-t', '--duration', type=int, default=0, help="Duration (in seconds) for the stream to run. 0-->24 hours")
 
     args = parser.parse_args()
 
@@ -79,8 +82,6 @@ if __name__ == "__main__":
 
     logging.info(f"Discovered chassis list: {chassis_list}")
 
-
-
     if args.chassis is not None:
         logging.info(f"Expected IP list: {args.chassis}")
         all_found = True
@@ -98,6 +99,8 @@ if __name__ == "__main__":
     all_sensors_calibrated = False
 
     while fService.is_service_running() and not all_sensors_calibrated:
+        if fConnector.num_valid_sensors() == 0:
+            break
         if fConnector.has_sensors_ready():
             sensors = fConnector.get_sensors_ready()
             fConnector.set_all_sensors_valid()
@@ -125,12 +128,12 @@ if __name__ == "__main__":
             sensors = fConnector.get_fine_zero_sensors()
             all_sensors_calibrated = True
 
-    duration = 120
+    logging.info("Initialization finished, preparing data stream")
+
     fService.start_data()
     if args.adc:
         fService.start_adc(0)
 
-    logging.info("Initialization finished, getting ready for data!")
     time.sleep(1)
 
     sample = fConnector.data_q.queue[-1][0]
@@ -138,21 +141,33 @@ if __name__ == "__main__":
 
     logging.info(f"Opening LSL-Outlet")
     outlet = FieldLineLSL(fConnector, sample, name=args.sname, source_id=args.sid)
+    print(outlet.streamInfo)
 
+    print(outlet)
 
+    if not args.duration == 0:
+        duration = timedelta(seconds=args.duration)
+    else:
+        duration = timedelta(hours=24)
+
+    duration = duration.total_seconds()
     start = datetime.now()
 
+
+    print(f"Starting data stream for {duration}")
+    runtime = 0
     samples_counter = 0
 
-    print("Start sending")
-    while timedelta(seconds=duration) > (datetime.now() - start):
+    while duration > runtime:
+        runtime = (datetime.now() - start).total_seconds()
+        if np.ceil(runtime) % 10 == 1:
+            print(f"Running since {runtime} seconds with {samples_counter/runtime} samples/second")
+
         try:
             samples = fConnector.data_q.get(True, 0.001)
             lsldata = [[ch_data['data'] for ch_data in sample.values()] for sample in samples]
             outlet.push_chunk(lsldata)
             samples_counter += len(samples)
-            print((datetime.now() - start).total_seconds())
-            print(f"{samples_counter/((datetime.now() - start).total_seconds()+0.001)} samples/second")
         except queue.Empty:
             continue
     print("Stopping")

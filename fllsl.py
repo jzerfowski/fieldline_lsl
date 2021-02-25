@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pylsl import StreamInfo, StreamOutlet
 
-from fieldline_datatype import FieldLineDataType
+from fieldline_api.fieldline_datatype import FieldLineDataType
 
 class FieldLineLSL(StreamOutlet):
     streamSamplingRate = 1000
@@ -24,6 +24,10 @@ class FieldLineLSL(StreamOutlet):
         self.streamInfo = self.getStreamInfo(sample)
 
         super().__init__(self.streamInfo, chunk_size=chunk_size, max_buffered=max_buffered)
+
+    def __str__(self):
+        return f'FieldLine LSL-Stream "{self.streamName}" (source_id: {self.streamSourceId}) ' \
+               f'{self.channel_count} Channels. ADC {"On" if self.adc else "Off"}'
 
     def getStreamInfo(self, sample):
         """
