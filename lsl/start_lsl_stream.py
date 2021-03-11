@@ -10,9 +10,10 @@ from datetime import datetime, timedelta
 from fieldline_api.fieldline_service import FieldLineService
 
 from fieldline_connector_lsl import FieldLineConnector
-from fieldline_stream_outlet import FieldLineStreamOutlet
+from fieldline_lsl_outlet import FieldLineStreamOutlet
 
 logger = logging.getLogger(__name__)
+
 
 def signal_stop_fService(signal, frame, fService):
     """
@@ -27,19 +28,24 @@ def signal_stop_fService(signal, frame, fService):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-v', '--verbose', action="count", default=0, help="Verbosity level - repeat up to three times.")
-    parser.add_argument('-c', '--chassis', action='append', default=None, help='Connect to chassis ip(s). Can be omitted or given multiple times', required=False)
-    parser.add_argument('--init_timeout', type=int, default=None, help="Timeout of initialization sequence (restart and coarse zeroing). Infinite if not given")
+    parser.add_argument('-v', '--verbose', action='count', default=0,
+                        help="Verbosity level - repeat up to three times.")
+    parser.add_argument('-c', '--chassis', action='append', default=None,
+                        help='Connect to chassis ip(s). Can be omitted or given multiple times', required=False)
+    parser.add_argument('--init_timeout', type=int, default=None,
+                        help="Timeout of initialization sequence (restart and coarse zeroing). Infinite if not given")
     parser.add_argument('--adc', action='store_true', default=False, help="Activate ADC Streams")
     parser.add_argument('-n', '--sname', default='FieldLineOPM', help="Name of the LSL Stream")
     parser.add_argument('-id', '--sid', default='flopm', help="Unique ID of the LSL Stream")
-    parser.add_argument('-t', '--duration', type=int, default=None, help="Duration (in seconds) for the stream to run. Infinite if not given")
+    parser.add_argument('-t', '--duration', type=int, default=None,
+                        help="Duration (in seconds) for the stream to run. Infinite if not given")
     # parser.add_argument('--sensors', type=str, default=None, help='Expected sensors') # Not yet implemented
     args = parser.parse_args()
 
     # expected_sensors = args.sensors
-    expected_sensors = [(0, 1), (0, 2), (1, 4)]  # Should be a list of tuples (chassis_id, sensor_id)
+    # expected_sensors = [(0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 8), (0, 9), (0, 10), (0, 11), (0, 12), (1, 1), (1, 2), (1, 3), (1, 4)]  # Should be a list of tuples (chassis_id, sensor_id)
     expected_sensors = None  # Starts all sensors on all chassis found
+    excluded_sensors = [(1, 7)]
 
     # Configure the logging
     stream_handler = logging.StreamHandler()
@@ -51,10 +57,10 @@ if __name__ == "__main__":
     )
 
     # Configure a timeout for the sensor startup phase
-    if args.init_timeout is None:
-        init_timeout = None
-    else:
+    if args.init_timeout is not None:
         init_timeout = timedelta(seconds=args.init_timeout)
+    else:
+        init_timeout = None
 
     logger.debug("Initialize the necessary FieldLine API communication instances")
     fConnector = FieldLineConnector()
@@ -72,7 +78,8 @@ if __name__ == "__main__":
     time.sleep(2)
 
     # Obtain list of IPs of discovered chassis
-    discovered_chassis = fService.get_chassis_list()
+    # We sort them to make sure that connected chassis are always in the same order
+    discovered_chassis = sorted(fService.get_chassis_list())
     logger.info(f"Discovered chassis list: {discovered_chassis}")
 
     logger.debug(f"Start initialization of sensors @{datetime.now()}")
@@ -103,7 +110,8 @@ if __name__ == "__main__":
             for chassis_id, sensor_ids in sensors.items():
                 logger.info(f"Chassis {chassis_id} has sensors {sensor_ids} available/ready")
                 for sensor_id in sensor_ids:
-                    if expected_sensors is None or (chassis_id, sensor_id) in expected_sensors:
+                    if (expected_sensors is None or (chassis_id, sensor_id) in expected_sensors) and (
+                    chassis_id, sensor_id) not in excluded_sensors:
                         fConnector.set_sensor_valid(chassis_id, sensor_id)
                         logger.info(f"Set sensor {chassis_id:02}:{sensor_id:02} valid, restarting")
                         fService.restart_sensor(chassis_id, sensor_id)
@@ -128,7 +136,8 @@ if __name__ == "__main__":
 
         elif fConnector.has_fine_zero_sensors() and fConnector.num_valid_sensors() == fConnector.get_num_fine_zero_sensors():
             sensors = fConnector.get_fine_zero_sensors()
-            if expected_sensors is None or all(sensor_id in sensors[chassis_id] for (chassis_id, sensor_id) in expected_sensors):
+            if expected_sensors is None or all(
+                    sensor_id in sensors[chassis_id] for (chassis_id, sensor_id) in expected_sensors):
                 logger.info("Success! All expected sensors are up and running")
                 break
 
@@ -164,17 +173,28 @@ if __name__ == "__main__":
 
     # Currently, the FieldLineStreamOutlet needs a sample from the chassis to determine the proper data structure
     structure_sample = fConnector.data_q.queue[-1]['samples'][0]
-    outlet = FieldLineStreamOutlet(structure_sample, fConnector, adc=args.adc)
+    outlet = FieldLineStreamOutlet(structure_sample, fConnector, name=args.sname, adc=args.adc, source_id=args.sid)
 
     fConnector.clear_queue()
     streaming_start = datetime.now()
 
-    while fService.is_service_running() and (duration is None or datetime.now()-streaming_start <= duration):
+    chunk_counter = 0
+
+    while fService.is_service_running() and (duration is None or datetime.now() - streaming_start <= duration):
         try:
             data = fConnector.data_q.get(True, 0.001)
+
             logger.debug(f"Received data from fConnector: {data}")
 
             outlet.push_flchunk(data['samples'], timestamp=data['timestamp'])
+
+            if chunk_counter % 1000 == 0:
+                logger.info(
+                    f"Streaming data on {outlet.streamInfo.name()} ({outlet.streamInfo.source_id()}) since {(datetime.now() - streaming_start).total_seconds():.3f} seconds")
+                if duration is not None:
+                    logger.info(
+                        f"{(duration - (datetime.now() - streaming_start)).total_seconds():.3f} seconds remaining")
+            chunk_counter += 1
         except queue.Empty:
             logger.debug("Queue empty")
             continue

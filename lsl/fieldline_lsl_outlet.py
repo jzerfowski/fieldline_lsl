@@ -2,7 +2,7 @@
 
 """Module documentation goes here"""
 
-from pylsl import StreamInfo, StreamOutlet, cf_int32
+from pylsl import StreamInfo, StreamOutlet, cf_int32, cf_float32
 
 from fieldline_api.fieldline_datatype import FieldLineDataType
 
@@ -10,7 +10,8 @@ class FieldLineStreamOutlet(StreamOutlet):
     nominal_srate = 1000
     chunk_size = 10
     type = 'MEG'
-    channel_format = cf_int32
+    # channel_format = cf_int32
+    channel_format = cf_float32
 
     def __init__(self, structure_sample, fConnector, name="FieldLineStream", source_id='flopm', adc=None, max_buffered=360):
         self.name = name
@@ -35,7 +36,7 @@ class FieldLineStreamOutlet(StreamOutlet):
 
 
     def __str__(self):
-        return f'FieldLine LSL-Stream "{self.streamName}" (source_id: {self.streamSourceId}) ' \
+        return f'FieldLine LSL-Stream "{self.name}" (source_id: {self.source_id}) ' \
                f'{self.channel_count} channels'
 
 
