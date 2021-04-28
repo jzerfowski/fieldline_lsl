@@ -4,13 +4,22 @@ import queue
 import signal
 import logging
 import argparse
-import collections
 from datetime import datetime, timedelta
+
 
 from fieldline_api.fieldline_service import FieldLineService
 
-from fieldline_connector_lsl import FieldLineConnector
+from fieldline_lsl_connector import FieldLineConnector
 from fieldline_lsl_outlet import FieldLineStreamOutlet
+
+stream_handler = logging.StreamHandler()
+logging_config = dict(
+    format='%(asctime)s %(levelname)s %(threadName)s(%(process)d) %(message)s [%(filename)s:%(lineno)d]',
+    datefmt='%d.%m.%Y %H:%M:%S',
+    handlers=[stream_handler],
+    level=logging.WARNING,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,41 +35,75 @@ def signal_stop_fService(signal, frame, fService):
     sys.exit()
 
 
+def find_chassis(fService, expected_chassis=None):
+    # Obtain list of IPs of discovered chassis
+    # We sort them to make sure that connected chassis are always in the same order
+    discovered_chassis = sorted(fService.get_chassis_list())
+    if not discovered_chassis:
+        logger.error("No chassis were found")
+        fService.stop()
+        sys.exit(1)
+
+    logger.info(f"Discovered chassis list: {discovered_chassis}")
+
+    if expected_chassis is not None:
+        logger.info(f"Expected chassis list: {expected_chassis}")
+
+        if not all(ip in discovered_chassis for ip in expected_chassis):
+            logger.error("Not all expected chassis discovered")
+            fService.stop()
+            sys.exit(1)
+        logger.info(f"Found all expected chassis: {expected_chassis}")
+        chassis_list = expected_chassis
+    else:
+        logger.info(f"No chassis expected; connecting to all available devices")
+        chassis_list = discovered_chassis
+    return chassis_list
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-v', '--verbose', action='count', default=0,
-                        help="Verbosity level - repeat up to three times.")
+                        help="Logging verbosity. Repeat up to three times. Defaults to only script info being printed")
     parser.add_argument('-c', '--chassis', action='append', default=None,
                         help='Connect to chassis ip(s). Can be omitted or given multiple times', required=False)
     parser.add_argument('--init_timeout', type=int, default=None,
-                        help="Timeout of initialization sequence (restart and coarse zeroing). Infinite if not given")
+                        help="Timeout (in s) of initialization sequence (restart and coarse zeroing). Defaults to 1 hour")
     parser.add_argument('--adc', action='store_true', default=False, help="Activate ADC Streams")
     parser.add_argument('-n', '--sname', default='FieldLineOPM', help="Name of the LSL Stream")
     parser.add_argument('-id', '--sid', default='flopm', help="Unique ID of the LSL Stream")
     parser.add_argument('-t', '--duration', type=int, default=None,
                         help="Duration (in seconds) for the stream to run. Infinite if not given")
+    parser.add_argument('--disable-restart', action='store_true', default=False,
+                        help="Disables restarting sensors before zeroing to save time. Will fail if sensors were not already started")
     # parser.add_argument('--sensors', type=str, default=None, help='Expected sensors') # Not yet implemented
     args = parser.parse_args()
 
-    # expected_sensors = args.sensors
-    # expected_sensors = [(0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 8), (0, 9), (0, 10), (0, 11), (0, 12), (1, 1), (1, 2), (1, 3), (1, 4)]  # Should be a list of tuples (chassis_id, sensor_id)
     expected_sensors = None  # Starts all sensors on all chassis found
-    excluded_sensors = [(1, 7)]
+    excluded_sensors = []
 
     # Configure the logging
-    stream_handler = logging.StreamHandler()
-    logging.basicConfig(
-        format='%(asctime)s %(levelname)s %(threadName)s(%(process)d) %(message)s [%(filename)s:%(lineno)d]',
-        datefmt='%d.%m.%Y %H:%M:%S',
-        level=[logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG][args.verbose],
-        handlers=[stream_handler]
-    )
+    print(args.verbose)
+    if args.verbose == 0:
+        logging_config['level'] = logging.WARNING
+        logger.setLevel(logging.INFO)
+    elif args.verbose == 1:
+        logging_config['level'] = logging.WARNING
+        logger.setLevel(logging.DEBUG)
+    elif args.verbose == 2:
+        logging_config['level'] = logging.INFO
+        logger.setLevel(logging.DEBUG)
+    elif args.verbose >= 3:
+        logging_config['level'] = logging.DEBUG
+        logger.setLevel(logging.DEBUG)
+
+    logging.basicConfig(**logging_config)
 
     # Configure a timeout for the sensor startup phase
     if args.init_timeout is not None:
         init_timeout = timedelta(seconds=args.init_timeout)
     else:
-        init_timeout = None
+        init_timeout = timedelta(hours=1)
 
     logger.debug("Initialize the necessary FieldLine API communication instances")
     fConnector = FieldLineConnector()
@@ -74,37 +117,24 @@ if __name__ == "__main__":
     # Add a signal handler that performs an orderly shutdown of fService
     signal.signal(signal.SIGINT, lambda frame, signal: signal_stop_fService(frame, signal, fService))
 
-    logger.debug("Wait for devices to be discovered")
+    logger.debug("Waiting for device discovery")
     time.sleep(2)
+    chassis_list = find_chassis(fService, args.chassis)
 
-    # Obtain list of IPs of discovered chassis
-    # We sort them to make sure that connected chassis are always in the same order
-    discovered_chassis = sorted(fService.get_chassis_list())
-    logger.info(f"Discovered chassis list: {discovered_chassis}")
-
-    logger.debug(f"Start initialization of sensors @{datetime.now()}")
     init_starttime = datetime.now()
-
-    chassis_list = []
-    if args.chassis is not None:
-        logger.info(f"Expected chassis list: {args.chassis}")
-        all_found = True
-        if not all(ip in discovered_chassis for ip in args.chassis):
-            logger.error("Not all expected chassis discovered")
-            fService.stop()
-            sys.exit(1)
-        logger.info(f"Connecting to chassis: {args.chassis}")
-        chassis_list = args.chassis
-    else:
-        chassis_list = discovered_chassis
+    logger.info(f"Starting chassis and sensor initialization ({init_starttime})")
 
     logger.info(f"Connecting to chassis: {chassis_list}")
     fService.connect(chassis_list)
 
-    logger.debug("Wait to establish connection")
+
+    logger.debug("Waiting to establish connection")
     time.sleep(1)
 
     while fService.is_service_running():
+        """
+        This loop restarts the sensors (or fakes their restart), and performs the field-zeroing steps
+        It only enters the next stage when all sensors finish previous stage"""
         if fConnector.has_sensors_ready():
             sensors = fConnector.get_sensors_ready()
             for chassis_id, sensor_ids in sensors.items():
@@ -112,9 +142,17 @@ if __name__ == "__main__":
                 for sensor_id in sensor_ids:
                     if (expected_sensors is None or (chassis_id, sensor_id) in expected_sensors) and (
                     chassis_id, sensor_id) not in excluded_sensors:
+                        # fService.turn_off_sensor(chassis_id, sensor_id)
+                        # time.sleep(1)
                         fConnector.set_sensor_valid(chassis_id, sensor_id)
-                        logger.info(f"Set sensor {chassis_id:02}:{sensor_id:02} valid, restarting")
-                        fService.restart_sensor(chassis_id, sensor_id)
+                        logger.info(f"Set sensor {chassis_id:02}:{sensor_id:02} valid")
+                        if not args.disable_restart:
+                            fService.restart_sensor(chassis_id, sensor_id)
+                            logger.info(f"Restarting sensor {chassis_id:02}:{sensor_id:02}")
+                        else:
+                            logger.info(f"Skipping sensor restart (--disable-restart set)")
+                            # Instead of restarting just tell the callback it restarted already
+                            fConnector.callback_restart_complete(chassis_id, sensor_id)
                     else:
                         logger.debug(f"Sensor {chassis_id:02}:{sensor_id:02} not in expected sensors, turning off")
                         fService.turn_off_sensor(chassis_id, sensor_id)
@@ -142,7 +180,7 @@ if __name__ == "__main__":
                 break
 
         elif expected_sensors is not None and fConnector.num_valid_sensors() < len(expected_sensors):
-            logger.error(f"An error occured. There are fewer valid sensors than expected.")
+            logger.error(f"An error occurred. There are fewer valid sensors than expected.")
             fService.stop()
             sys.exit(1)
 
@@ -150,7 +188,7 @@ if __name__ == "__main__":
             logger.info(f"No Sensors expected, skipping initialization")
             break
 
-        if init_timeout and (datetime.now() - init_starttime) > init_timeout:
+        if (datetime.now() - init_starttime) > init_timeout:
             logger.error(f"Initialization of sensors took longer than the defined timeout")
             fService.stop()
             sys.exit(1)
@@ -168,18 +206,21 @@ if __name__ == "__main__":
     else:
         duration = None
 
-    logger.debug(f"Wait to ensure that all sensors started streaming data")
+    logger.debug(f"Waiting to ensure that all sensors start streaming data")
     time.sleep(0.5)
 
-    # Currently, the FieldLineStreamOutlet needs a sample from the chassis to determine the proper data structure
+    # Currently fService/fConnector do not provide information about the streamed channels
+    # Therefore, the FieldLineStreamOutlet needs a data sample to determine the proper data structure
     structure_sample = fConnector.data_q.queue[-1]['samples'][0]
+
+    # Open an LSL outlet. Uses the structure_sample to generate LSL Info
     outlet = FieldLineStreamOutlet(structure_sample, fConnector, name=args.sname, adc=args.adc, source_id=args.sid)
 
+    # Empty the queue to start streaming only new samples
     fConnector.clear_queue()
     streaming_start = datetime.now()
 
     chunk_counter = 0
-
     while fService.is_service_running() and (duration is None or datetime.now() - streaming_start <= duration):
         try:
             data = fConnector.data_q.get(True, 0.001)
@@ -195,11 +236,12 @@ if __name__ == "__main__":
                     logger.info(
                         f"{(duration - (datetime.now() - streaming_start)).total_seconds():.3f} seconds remaining")
             chunk_counter += 1
+
         except queue.Empty:
             logger.debug("Queue empty")
             continue
 
-    logger.inf("Finished streaming, shut down data streams")
+    logger.info("Finished streaming, shut down data streams")
     if args.adc:
         for chassis_id in fConnector.get_chassis_ids():
             fService.stop_adc(chassis_id)
