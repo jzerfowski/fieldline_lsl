@@ -10,7 +10,7 @@ class FieldLineConnector(FieldLineCallback):
     """
     A modified FieldLineCallback to accomodate LabStreamingLayer Streams.
     Caution, the samples in the queue are dicts:
-    {'timestamp': local_clock(), 'samples', samples} rather than just samples
+    {'timestamp': local_clock(), 'samples': samples} rather than just samples
     """
     def __init__(self):
         super().__init__()
@@ -28,19 +28,16 @@ class FieldLineConnector(FieldLineCallback):
     def callback_chassis_connected(self, chassis_name, chassis_id):
         self.chassis_id_to_name[chassis_id] = chassis_name
         logger.info(f"CONNECTOR Chassis {chassis_name} with ID {chassis_id} connected")
-        sys.stdout.flush()
 
     # required callback
     def callback_chassis_disconnected(self, chassis_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} disconnected")
-        sys.stdout.flush()
         del self.chassis_id_to_name[chassis_id]
 
     # required callback
     def callback_sensors_available(self, chassis_id, sensor_list):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} has sensors {sensor_list}")
-        sys.stdout.flush()
-        # self.new_sensors[chassis_id] = [[s, False] for s in sensor_list]
+
         self.sensors_ready[chassis_id] = sensor_list
         for s in sensor_list:
             if s not in self.all_sensors_list:
@@ -49,7 +46,7 @@ class FieldLineConnector(FieldLineCallback):
     # required callback
     def callback_sensor_ready(self, chassis_id, sensor_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} sensor {sensor_id} ready")
-        sys.stdout.flush()
+
         for s in self.new_sensors[chassis_id]:
             if s[0] == sensor_id:
                 s[1] = True
@@ -60,12 +57,12 @@ class FieldLineConnector(FieldLineCallback):
     # required callback
     def callback_restart_begin(self, chassis_id, sensor_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} sensor {sensor_id} restart")
-        sys.stdout.flush()
+
 
     # required callback
     def callback_restart_complete(self, chassis_id, sensor_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} sensor {sensor_id} restart complete")
-        sys.stdout.flush()
+
         if chassis_id not in self.restarted_sensors:
             self.restarted_sensors[chassis_id] = []
         self.restarted_sensors[chassis_id].append(sensor_id)
@@ -73,12 +70,12 @@ class FieldLineConnector(FieldLineCallback):
     # required_callback
     def callback_coarse_zero_begin(self, chassis_id, sensor_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} sensor {sensor_id} coarse zero")
-        sys.stdout.flush()
+
 
     # required callback
     def callback_coarse_zero_complete(self, chassis_id, sensor_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} sensor {sensor_id} coarse zero complete")
-        sys.stdout.flush()
+
         if chassis_id not in self.coarse_zero_sensors:
             self.coarse_zero_sensors[chassis_id] = []
         self.coarse_zero_sensors[chassis_id].append(sensor_id)
@@ -86,12 +83,12 @@ class FieldLineConnector(FieldLineCallback):
     # required_callback
     def callback_fine_zero_begin(self, chassis_id, sensor_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} sensor {sensor_id} fine zero")
-        sys.stdout.flush()
+
 
     # required_callback
     def callback_fine_zero_complete(self, chassis_id, sensor_id):
         logger.info(f"CONNECTOR Chassis {self.chassis_id_to_name[chassis_id]} sensor {sensor_id} fine zero complete")
-        sys.stdout.flush()
+
         if chassis_id not in self.fine_zero_sensors:
             self.fine_zero_sensors[chassis_id] = []
         self.fine_zero_sensors[chassis_id].append(sensor_id)
@@ -106,9 +103,9 @@ class FieldLineConnector(FieldLineCallback):
 
     # custom functions below
     def callback_data_available(self, sample_list):
-        # For LSL we require accurate timestamping
+        # For LSL we require accurate timestamping, so we add the local_clock time to the sample
         time = local_clock()
-        data = dict(timestamp=local_clock(), samples=sample_list)
+        data = dict(timestamp=time, samples=sample_list)
         self.data_q.put(data)
 
     def has_new_sensors(self):
@@ -142,6 +139,7 @@ class FieldLineConnector(FieldLineCallback):
         return ret
 
     def get_num_restarted_sensors(self):
+        # restarted_sensors is dict with chassis_id: [sensors]. Add up all lengths of [sensors]
         return sum([len(s) for s in self.restarted_sensors.values()])
 
     def has_coarse_zero_sensors(self):
