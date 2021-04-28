@@ -66,9 +66,4 @@ of the stream can be inferred. This info is used to generate the LSL Info object
 
 The fConnector-queue is then emptied after opening the LSL Outlet to avoid 'old' samples in the queue.
 Approx. every 10 seconds (every 1000 chunks: 10 samples/chunk @1000 Hz sampling rate), the user is notified about 
-the runtime and the remaining time. 
-
-## TODO
-
-- Only print script logging info to the console with speaking messages, rather than all API info messages
-- Make sure that failing sensor messages are printed prominently to not pass unnoticed
+the runtime and the remaining time.
