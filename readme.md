@@ -23,6 +23,14 @@ This will connect only to the chassis at IP address 192.168.2.43 and stream all 
 data (`--adc`) for 600 seconds.
  
 
+## Requirements
+**If you use code from this repository in your publication or project, I ask you to give credit for my work and 
+link so others can benefit too.** 
+
+- fieldline_api (0.0.13)
+- [pylsl](https://pypi.org/project/pylsl/)
+
+
 ## Command line arguments
 Use `python .\start_lsl_stream.py -h` to view this
 
@@ -46,11 +54,6 @@ optional arguments:
   --disable-restart     Disables restarting sensors before zeroing to save time. Will fail if sensors were not already
                         started
 ```
-
-## Requirements
-
-- fieldline_api (0.0.13)
-- [pylsl](https://pypi.org/project/pylsl/)
 
 ## Details
 
