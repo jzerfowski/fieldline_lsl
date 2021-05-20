@@ -24,8 +24,8 @@ data (`--adc`) for 600 seconds.
  
 
 ## Requirements
-**If you use code from this repository in your publication or project, I ask you to give credit for my work and 
-link so others can benefit too.** 
+***If you use code from this repository in your publication or project, I ask you to give credit for my work and 
+link this repo so others can benefit too.*** 
 
 - fieldline_api (0.0.13)
 - [pylsl](https://pypi.org/project/pylsl/)
