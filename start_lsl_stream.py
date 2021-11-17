@@ -30,7 +30,7 @@ def signal_stop_fService(signal, frame, fService):
     """
     logger.info("Signal handler has been called to shut down application")
     if fService is not None:
-        fService.stop()
+        fService.stop_streaming()
         logger.info("FieldLine Service Stopped")
     sys.exit()
 
@@ -41,7 +41,7 @@ def find_chassis(fService, expected_chassis=None):
     discovered_chassis = sorted(fService.get_chassis_list())
     if not discovered_chassis:
         logger.error("No chassis were found")
-        fService.stop()
+        fService.stop_streaming()
         sys.exit(1)
 
     logger.info(f"Discovered chassis list: {discovered_chassis}")
@@ -51,7 +51,7 @@ def find_chassis(fService, expected_chassis=None):
 
         if not all(ip in discovered_chassis for ip in expected_chassis):
             logger.error("Not all expected chassis discovered")
-            fService.stop()
+            fService.stop_streaming()
             sys.exit(1)
         logger.info(f"Found all expected chassis: {expected_chassis}")
         chassis_list = expected_chassis

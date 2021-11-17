@@ -5,6 +5,8 @@
 from pylsl import StreamInfo, StreamOutlet, cf_int32, cf_float32
 
 from fieldline_api.fieldline_datatype import FieldLineDataType
+import numpy as np
+
 
 class FieldLineStreamOutlet(StreamOutlet):
     nominal_srate = 1000
@@ -13,14 +15,15 @@ class FieldLineStreamOutlet(StreamOutlet):
     # channel_format = cf_int32
     channel_format = cf_float32
 
-    def __init__(self, structure_sample, fConnector, name="FieldLineStream", source_id='flopm', adc=None, max_buffered=360):
+    def __init__(self, structure_sample, fConnector, fService, name="FieldLineStream", source_id='flopm', adc=None, max_buffered=360):
         self.name = name
         self.source_id = source_id
         self.fConnector = fConnector
+        self.fService = fService
 
         self.channel_count = len(structure_sample.keys())
 
-        chassis_ids = fConnector.get_chassis_ids()
+        chassis_ids = list(fConnector.chassis_id_to_name.keys())
 
         if adc is None or adc is False:
             self.chassis_adcs = []
@@ -47,6 +50,11 @@ class FieldLineStreamOutlet(StreamOutlet):
         """
 
         self.channel_count = len(sample.keys())
+        # sample_timestamps = sample['timestamp']
+        # sample_timestamp_lsl = sample['timestamp_lsl']
+        sample_data_frames = sample['data_frames']
+
+        self.channel_count = len(sample_data_frames)
 
         stream_info = StreamInfo(name=self.name,
                                 type=self.type, channel_count=self.channel_count,
@@ -57,19 +65,41 @@ class FieldLineStreamOutlet(StreamOutlet):
 
         channels = stream_info.desc().append_child("channels")
 
-        for channel_name, channel_data in sample.items():
+        scaling_factors = []
+
+        for data_frame_name, data_frame_data in sample_data_frames.items():
             ch = channels.append_child('channel')
-            ch.append_child_value('label', channel_name)
-            ch.append_child_value('unit', '?')
-            ch.append_child_value('type', str(channel_data['data_type']))
-            ch.append_child_value('data_type', str(channel_data['data_type']))
-            ch.append_child_value('calibration', str(channel_data['calibration']))
-            ch.append_child_value('sensor_idx', str(channel_data['idx']))
-            ch.append_child_value('sensor_id', str(channel_data['sensor_id']))
+            ch.append_child_value('label', data_frame_data['sensor'])
+            # ch.append_child_value('unit', '?')
+
+            type = data_frame_data['data_type']
+
+            calibration_value = self.fService.get_calibration_value(data_frame_name)['calibration']  # for value in T/V
+
+            if type == 0:
+                # ADC channel
+                scaling_factor = calibration_value
+                unit = 'V'
+                type_str = 'adc'
+            elif type == 28 or type == 50:
+                if type == 28:
+                    type_str = 'opm_open'
+                elif type == 50:
+                    type_str = 'opm_closed'
+
+                scaling_factor = calibration_value*1e12  # To unit fT
+                unit = 'fT'
+
+            ch.append_child_value('type', type_str)
+            ch.append_child_value('unit', unit)
+            scaling_factors.append(scaling_factor)
+
+        self.scaling_factors = np.array(scaling_factors)
 
         return stream_info
 
-    def push_flchunk(self, samples, timestamp, pushthrough=True):
-        x = [[ch_data['data'] for ch_data in sample.values()] for sample in samples]
+    def push_flchunk(self, data_frames, timestamp, pushthrough=True):
+        x = ([[frame['data'] for frame in data_frames.values()]]*self.scaling_factors).astype(np.float32).tolist()
+        # x = [[ch_data['data'] for ch_data in sample.values()] for sample in samples]
         self.push_chunk(x, timestamp=timestamp, pushthrough=pushthrough)
 
