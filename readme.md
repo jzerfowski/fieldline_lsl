@@ -1,7 +1,7 @@
 # FieldLine LabStreamingLayer module
 
 This is a script to automatically start and calibrate the FieldLine Optically Pumped Magnetometers and stream the data via [LabStreamingLayer](https://labstreaminglayer.readthedocs.io/). It requires python 3.9, the FieldLine API module (and all its requirements) as
-well as [pylsl](https://pypi.org/project/pylsl/) for the streaming (see [requirements.txt](requirements.txt)).
+well as [pylsl](https://pypi.org/project/pylsl/) for the streaming (see [requirements.txt](requirements.txt)). LSL streams can be recorded easiest with [LabRecorder](https://github.com/labstreaminglayer/App-LabRecorder) and viewed with tools from the [pylsl](https://pypi.org/project/pylsl/) project. .xdf-files from LabRecorder can be read with [pyxdf](https://github.com/xdf-modules/pyxdf).
 
 Since version 0.3.0 there is no automatic discovery anymore so the ip addresses of the chassis have to be known (e.g., retrieve them from FieldLine Recorder).
 The FieldLine Recorder can be used in parallel (from version 1.4.44), also for restarting and zeroing the sensors. Keep in mind that streaming will be interrupted when restarting or re-zeroing sensors during runtime.
