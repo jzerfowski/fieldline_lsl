@@ -20,10 +20,10 @@ import logging
 from threading import Event, Thread
 import importlib.metadata
 
+import pylsl
+
 from fieldline_api.fieldline_service import FieldLineService
 from fieldline_api.pycore.sensor import ChannelInfo
-
-import pylsl
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +41,31 @@ class Unit_T_Factor(Enum):
     """
     Represent common orders of magnitude and their factors relative to SI unit Tesla
     """
-    T = 1
-    mT = 1E3
-    uT = 1E6
-    nT = 1E9
-    pT = 1E12
-    fT = 1E15
+    T = 1  # Tesla
+    mT = 1E3  # milliTesla
+    uT = 1E6  # microTesla
+    nT = 1E9  # nanoTesla
+    pT = 1E12  # picoTesla
+    fT = 1E15  # femtoTesla
 
 
 class FieldLineLSL2(FieldLineService):
     """
-    Instance of FieldLineService to facilitate streaming of data via LSL
+    Instance of FieldLineService to enable streaming of data via LSL
+    Initialized with all relevant information for connecting to one or multiple (daisy-chained) chassis.
     """
     def __init__(self, ip_list: List[str], stream_name: str = "FieldLineOPM", source_id: str = "FieldLineOPM_Stream",
-                 prefix: str = "", stream_type='MEG', log_heartbeat: int = 60, unit_T: Unit_T_Factor = Unit_T_Factor.fT):
+                 stream_type='MEG', log_heartbeat: int = 60, unit_T: Unit_T_Factor = Unit_T_Factor.fT, prefix: str = "",):
+        """
+        Initialize the FieldLineLSL instance
+        :param ip_list: List of ip addresses as strings (without ports)
+        :param stream_name: Name of the LSL Stream to open
+        :param source_id: Source id of the LSL Stream to open
+        :param stream_type: Type of LSL Stream, default (some software can only properly handle "EEG" streams)
+        :param log_heartbeat: How often a "heartbeat" should be logged to the console, in seconds. Logs nothing if set to 0
+        :param unit_T: Unit of the streamed OPM data (default is femtoTesla (fT))
+        :param prefix: prefix for use in FieldLineService (not documented in FieldLine API)
+        """
         super().__init__(ip_list=ip_list, prefix=prefix)
 
         # LSL Information provided by user
@@ -67,7 +78,7 @@ class FieldLineLSL2(FieldLineService):
         self.stream_info: pylsl.StreamInfo = None
         self.stream_outlet: pylsl.StreamOutlet = None
 
-        self._channel_names: list = None
+        self._channel_names: list = None  # set in self._build_channel_names()
 
         if unit_T not in Unit_T_Factor:
             logger.warning(f"{unit_T=} is not a known unit. Please provide an instance of {Unit_T_Factor}")
@@ -76,22 +87,32 @@ class FieldLineLSL2(FieldLineService):
             self.unit_T: Unit_T_Factor = unit_T
         self.unit_T_factor = self.unit_T.value
 
+        # Internal flags and objects for multithreading
         self.done: Event = Event()
         self.data_queue: Queue = Queue()
 
         self.streaming_thread: Thread = None
         self.running: bool = False
 
-        self._calibration_dict: dict = None
+        self._calibration_dict: dict = None  # Calibration values of all channels to compute data in correct unit
 
-        self.t_stream_start: int = None
         self.log_heartbeat: int = log_heartbeat
+        self.t_stream_start: int = None
 
         self.first_lsl_timestamp = None  # Timestamp of pylsl.local_clock() to sync with chassis_timestamps
         self.first_chassis_timestamp = None  # FieldLine chassis system's timestamp of first dataframe to arrive
 
-    def init_sensors(self, skip_restart=True, skip_zeroing=True, closed_loop_mode=True,
-                     adcs: Union[bool, List] = False):
+    def init_sensors(self, skip_restart: bool = True, skip_zeroing: bool = True, closed_loop_mode: bool = True,
+                     adcs: Union[bool, List[int]] = False):
+        """
+        Initialize the sensors. Steps can be skipped if the sensors already are zeroed or this is done in parallel using
+        the FieldLine Recorder
+        :param skip_restart: Skip the restart of the sensors
+        :param skip_zeroing: Skip both zeroing steps of the sensors (only skip when restart is also skipped!)
+        :param closed_loop_mode: If true, sets the sensors to closed loop mode
+        :param adcs: If True: turn on all ADCs. if list of integers (chassis_ids): Turn ADCs on for these ids. if False:
+            Do not turn on adcs.
+        """
         connect_to_sensor_dict = self.load_sensors()
 
         logger.info(f"Initializing sensors {connect_to_sensor_dict}")
@@ -105,39 +126,15 @@ class FieldLineLSL2(FieldLineService):
 
         self.init_adcs(adcs)
 
-        self._set_channel_names()
+        self._build_channel_names()
         self._set_calibration_dict()
 
-    def restart_sensors(self, sensors: dict):
-        logger.info(f"Restarting sensors {sensors}")
-        super().restart_sensors(sensors, on_next=self.callback_restarted, on_error=self.callback_error,
-                                on_completed=lambda: self.callback_completed("Restart"))
-        logger.info(f"Waiting for restart to be complete")
-
-        self.done.wait()
-        self.done.clear()
-
-    def turn_off_sensors(self, sensors: dict):
-        logger.info(f"Turning off sensors {sensors}")
-        super().turn_off_sensors(sensors)
-        logger.info(f"Turned off sensors {sensors}")
-
-    def zero_sensors(self, sensors: dict):
-        logger.info(f"Coarse zeroing sensors {sensors}")
-        self.coarse_zero_sensors(sensors, on_next=self.callback_coarse_zeroed, on_error=self.callback_error,
-                                 on_completed=lambda: self.callback_completed("Coarse zeroing"))
-        logger.info(f"Waiting for coarse zeroing to be complete")
-        self.done.wait()
-        self.done.clear()
-
-        logger.info(f"Fine zeroing sensors {sensors}")
-        self.fine_zero_sensors(sensors, on_next=self.callback_fine_zeroed, on_error=self.callback_error,
-                               on_completed=lambda: self.callback_completed("Fine zeroing"))
-        logger.info("Waiting for fine zeroing to be complete")
-        self.done.wait()
-        self.done.clear()
-
-    def init_adcs(self, adcs: Union[bool, List]):
+    def init_adcs(self, adcs: Union[bool, List[int]]):
+        """
+        Initialize the ADCs, called automatically by init_sensors()
+        :param adcs:
+        :return:
+        """
         chassis_list = [chassis_dict['chassis_id'] for chassis_dict in self.get_chassis_desc_dicts()]
         start_adc_on_chassis = []
 
@@ -158,7 +155,101 @@ class FieldLineLSL2(FieldLineService):
 
         return start_adc_on_chassis
 
+    def init_stream(self):
+        """
+        Initialize the LSL stream
+        """
+        logger.info(f"Initializing LSL stream")
+        self.build_stream_info()  # Will automatically set self.stream_info
+        self.stream_outlet = pylsl.StreamOutlet(self.stream_info)
+
+    def restart_sensors(self, sensors: dict):
+        """
+        Dictionary of sensors to restart
+        :param sensors: dictionary of {chassis_id: [list of sensor_ids], ...}
+        """
+        logger.info(f"Restarting sensors {sensors}")
+        super().restart_sensors(sensors, on_next=self.callback_restarted, on_error=self.callback_error,
+                                on_completed=lambda: self.callback_completed("Restart"))
+        logger.info(f"Waiting for restart to be complete")
+
+        self.done.wait()
+        self.done.clear()
+
+    def turn_off_sensors(self, sensors: dict):
+        """
+        Dictionary of sensors to turn off
+        :param sensors: dictionary of {chassis_id: [list of sensor_ids], ...}
+        """
+        logger.info(f"Turning off sensors {sensors}")
+        super().turn_off_sensors(sensors)
+        logger.info(f"Turned off sensors {sensors}")
+
+    def zero_sensors(self, sensors: dict):
+        """
+        Dictionary of sensors to perform field-zeroing on
+        :param sensors: dictionary of {chassis_id: [list of sensor_ids], ...}
+        """
+        logger.info(f"Coarse zeroing sensors {sensors}")
+        self.coarse_zero_sensors(sensors, on_next=self.callback_coarse_zeroed, on_error=self.callback_error,
+                                 on_completed=lambda: self.callback_completed("Coarse zeroing"))
+        logger.info(f"Waiting for coarse zeroing to be complete")
+        self.done.wait()
+        self.done.clear()
+
+        logger.info(f"Fine zeroing sensors {sensors}")
+        self.fine_zero_sensors(sensors, on_next=self.callback_fine_zeroed, on_error=self.callback_error,
+                               on_completed=lambda: self.callback_completed("Fine zeroing"))
+        logger.info("Waiting for fine zeroing to be complete")
+        self.done.wait()
+        self.done.clear()
+
+    def start_streaming(self):
+        """
+        Start the LSL streaming. Non-blocking!
+        :return:
+        """
+        if self.stream_outlet is None:
+            self.init_stream()
+
+        logger.info(f"Starting to read data from chassis")
+        self.read_data(self.callback_data_available)
+
+        logger.info(f"Starting streaming Thread")
+        self.running = True
+        self.streaming_thread = Thread(target=self.thread_stream_data,
+                                       name=f"FieldLine LSL Streaming ({self.stream_name})")
+        self.streaming_thread.start()
+
+    def stop_streaming(self):
+        """
+        Stop the LSL streaming. Blocks until streaming is stopped
+        :return:
+        """
+        if self.running:
+            self.running = False
+            self.read_data(data_callback=None)
+            self.streaming_thread.join()
+            logger.info(f"Stopped streaming")
+        else:
+            logger.warning(f"Streaming not running. Nothing to stop.")
+
+    def close(self):
+        """
+        Close the StreamOutlet and FieldLineService
+        :return:
+        """
+        if self.running:
+            self.stop_streaming()
+        self.stream_info = None
+        self.stream_outlet = None
+        super().close()
+
     def thread_stream_data(self):
+        """
+        Stream the incoming data on the LSL stream until self.running is set to False
+        :return:
+        """
         self.t_stream_start = pylsl.local_clock()
         last_heartbeat = self.t_stream_start
         logger.info(f"Starting to stream data on {self.stream_name} at t_local={self.t_stream_start}")
@@ -195,56 +286,6 @@ class FieldLineLSL2(FieldLineService):
                     f" at t_local={stream_stop}")
         self.t_stream_start = None
 
-    def get_timestamp(self, chassis_timestamp):
-        return self.first_lsl_timestamp + (chassis_timestamp - self.first_chassis_timestamp) / 25000.0
-
-    def start_streaming(self):
-        if self.stream_outlet is None:
-            self.init_stream()
-
-        logger.info(f"Starting to read data from chassis")
-        self.read_data(self.callback_data_available)
-
-        logger.info(f"Starting streaming Thread")
-        self.running = True
-        self.streaming_thread = Thread(target=self.thread_stream_data,
-                                       name=f"FieldLine LSL Streaming ({self.stream_name})")
-        self.streaming_thread.start()
-
-    def stop_streaming(self):
-        if self.running:
-            self.running = False
-            self.read_data(data_callback=None)
-            self.streaming_thread.join()
-            logger.info(f"Stopped streaming")
-        else:
-            logger.warning(f"Streaming not running. Nothing to stop.")
-
-    def init_stream(self):
-        logger.info(f"Initializing LSL stream")
-        self.build_stream_info()  # Will automatically set self.stream_info
-        self.stream_outlet = pylsl.StreamOutlet(self.stream_info)
-
-    def close(self):
-        if self.running:
-            self.stop_streaming()
-        self.stream_info = None
-        self.stream_outlet = None
-        super().close()
-
-    def get_sensors(self):
-        return self.data_source.get_sensors()
-
-    def get_channels(self):
-        return [channel for sensor in self.get_sensors() for channel in sensor.get_channels()]
-
-    def _set_channel_names(self):
-        self._channel_names = [channel.name for channel in self.get_channels()]
-
-    @property
-    def channel_names(self):
-        return self._channel_names
-
     def _set_calibration_dict(self):
         calibration_dict = dict()
         for channel in self.get_channels():
@@ -256,6 +297,10 @@ class FieldLineLSL2(FieldLineService):
         self._calibration_dict = calibration_dict
 
     def build_stream_info(self):
+        """
+        Obtain the information needed to open an lsl stream and write a
+        StreamInfo object immediately into self.stream_info.
+        """
         # Obtain the information we need to open an LSL stream:
 
         self.channel_count = len(self.get_channels())
@@ -281,6 +326,9 @@ class FieldLineLSL2(FieldLineService):
                 desc_channel.append_child_value(key, str(value))
 
     def get_chassis_desc_dicts(self):
+        """
+        Return a list of all chassis_desc dictionaries (see get_chassis_desc_dict()) connected to this service
+        """
         chassis_dicts = []
         for chassis_name in self.data_source.get_chassis_names():
             chassis_id = self.data_source.chassis_name_to_id[chassis_name]
@@ -290,6 +338,9 @@ class FieldLineLSL2(FieldLineService):
         return chassis_dicts
 
     def get_chassis_desc_dict(self, chassis_id):
+        """
+        Return a dictionary containing name, id, serial and version of the chassis with id chassis_id
+        """
         return dict(
             name=self.data_source.get_chassis_name_from_id(chassis_id),
             chassis_id=chassis_id,
@@ -298,6 +349,11 @@ class FieldLineLSL2(FieldLineService):
         )
 
     def get_channel_desc_dict(self, channel: ChannelInfo):
+        """
+        Return a  dictionary containing name (label), data type, calibration values and more of a sensor.
+        :param channel: ChannelInfo object as returned by self.data_source.get_sensors()[].get_channels()[]
+        :return: dictionary with information about a channel
+        """
         chassis_id = channel.chassis_id
         sensor_id = channel.sensor_id
 
@@ -328,7 +384,12 @@ class FieldLineLSL2(FieldLineService):
 
         return channel_dict
 
-    def get_data_type(self, channel):
+    def get_data_type(self, channel: ChannelInfo):
+        """
+        Return the datatype according to channel.data_type
+        :param channel:
+        :return:
+        """
         try:
             return FieldLineDataType(channel.data_type)
         except ValueError:
@@ -357,12 +418,36 @@ class FieldLineLSL2(FieldLineService):
         self.done.set()
 
     def callback_data_available(self, data):
-        # logger.debug(f"Received data: {data}")
         if self.first_lsl_timestamp is None:
-            # In case we never received a data packet before, save the
-            # chassis system timestamp of the sample as well as this device's
-            # reference time
+            # If this is the first sample, save the chassis system timestamp and this device's reference time
+            # this is used in self.get_timestamp()
             self.first_lsl_timestamp = pylsl.local_clock()
             self.first_chassis_timestamp = data['timestamp']
 
         self.data_queue.put(data)
+
+    def get_timestamp(self, chassis_timestamp):
+        """
+        Transform a chassis system timestamp into an pylsl.local_clock() timestamp
+        Uses 25000 because the clock on FieldLine chassis is 25 MHz and sfreq is 1 kHz.
+        :param chassis_timestamp:
+        :return:
+        """
+        return self.first_lsl_timestamp + (chassis_timestamp - self.first_chassis_timestamp) / 25000.0
+
+    def get_sensors(self):
+        return self.data_source.get_sensors()
+
+    def get_channels(self):
+        return [channel for sensor in self.get_sensors() for channel in sensor.get_channels()]
+
+    def _build_channel_names(self):
+        """
+        Sets self._channel_names to have a fixed list of channels
+        :return:
+        """
+        self._channel_names = [channel.name for channel in self.get_channels()]
+
+    @property
+    def channel_names(self):
+        return self._channel_names
