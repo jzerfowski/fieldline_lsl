@@ -1,19 +1,12 @@
-# FieldLine LSL module
+# FieldLine LabStreamingLayer module
 
-This is a script to automatically startup the FieldLine OPM sensors (V2) and stream the data
-via [LSL](https://labstreaminglayer.readthedocs.io/). It requires the FieldLine API module (and all its requirements) as
-well as [pylsl](https://pypi.org/project/pylsl/) for the streaming.
+This is a script to automatically start and calibrate the FieldLine Optically Pumped Magnetometers and stream the data via [LabStreamingLayer](https://labstreaminglayer.readthedocs.io/). It requires python 3.9, the FieldLine API module (and all its requirements) as
+well as [pylsl](https://pypi.org/project/pylsl/) for the streaming (see [requirements.txt](requirements.txt)).
 
-If no additional arguments are provided, the script connects to all discovered chassis on the network and attempts to
-restart->coarse-zero->fine-zero all sensors. When sensors fail during startup, the streaming is started with remaining
-sensors. The stream runs forever if no `-t` argument is given.
+Since version 0.3.0 there is no automatic discovery anymore so the ip addresses of the chassis have to be known (e.g., retrieve them from FieldLine Recorder).
+The FieldLine Recorder can be used in parallel (from version 1.4.44), also for restarting and zeroing the sensors. Keep in mind that streaming will be interrupted when restarting or re-zeroing sensors during runtime.
 
-During startup, the logging gives indications about the state of the system. Verbosity can be modified with `-v` 
-such that more information is printed on the console.
-After the startup is finished and the streaming started, every 10 seconds a 'heartbeat' is printed to inform the 
-user that the stream is still running:
-
-`Streaming data on FieldLineOPM (flopm) since ... seconds`
+There is not yet a way to selectively stream from some sensors. Sensors can be turned off in the FieldLine Recorder and streaming must be stopped, then they will not appear on the LSL stream when restart is skipped. A regular heartbeat is printed (default = 60 seconds). WHen multiple chassis are daisy-chained, all their IPs have to be provided (probably in order of chaining, not documented in FieldLine API).
 
 Here is an example call to use the script:
 ```
@@ -24,10 +17,15 @@ data (`--adc`) for 600 seconds.
  
 
 ## Requirements
-***If you use code from this repository in your publication or project, I ask you to give credit for my work and 
-link this repo so others can benefit too.*** 
+***If you use code from this repository in your publication or project, I ask you to give credit for my work by citing our paper and 
+link to this repo so others can benefit too:***
 
-- fieldline_api (0.0.13)
+J. Zerfowski, T. H. Sander, M. Tangermann, S. R. Soekadar, and T. Middelmann (2021). Real-Time Data Processing for Brain-Computer Interfacing using Optically Pumped Magnetometers. International Journal of Bioelectromagnetism. Vol. 23, No. 1, pp. 14/1 - 6.
+[link to pdf](http://www.ijbem.org/volume23/number2/14.pdf)
+
+- Requirements are listed in [requirements.txt](requirements.txt)
+- python >= 3.9
+- fieldline_api >= 0.3.1
 - [pylsl](https://pypi.org/project/pylsl/)
 
 
@@ -35,38 +33,31 @@ link this repo so others can benefit too.***
 Use `python .\start_lsl_stream.py -h` to view this
 
 ```
-usage: start_lsl_stream.py [-h] [-v] [-c CHASSIS] [--init_timeout INIT_TIMEOUT] [--adc] [-n SNAME] [-id SID]
-                           [-t DURATION] [--disable-restart]
+usage: start_lsl_stream.py [-h] -c CHASSIS [--not-skip-restart]
+                           [--not-skip-zeroing] [--adc] [-n STREAM_NAME]
+                           [-id STREAM_ID] [-t DURATION]
+                           [--heartbeat HEARTBEAT] [-v]
 
 optional arguments:
   -h, --help            show this help message and exit
-  -v, --verbose         Logging verbosity. Repeat up to three times. Defaults to only script info being printed
   -c CHASSIS, --chassis CHASSIS
-                        Connect to chassis ip(s). Can be omitted or given multiple times
-  --init_timeout INIT_TIMEOUT
-                        Timeout (in s) of initialization sequence (restart and coarse zeroing). Defaults to 1 hour
+                        Connect to chassis ip(s).
+  --not-skip-restart    If set, all sensors will be restarted automatically
+  --not-skip-zeroing    If set, all sensors will be coarse- and fine-zeroed
+                        automatically before streaming
   --adc                 Activate ADC Streams
-  -n SNAME, --sname SNAME
+  -n STREAM_NAME, --stream_name STREAM_NAME
                         Name of the LSL Stream
-  -id SID, --sid SID    Unique ID of the LSL Stream
+  -id STREAM_ID, --stream_id STREAM_ID
+                        Unique ID of the LSL Stream
   -t DURATION, --duration DURATION
-                        Duration (in seconds) for the stream to run. Infinite if not given
-  --disable-restart     Disables restarting sensors before zeroing to save time. Will fail if sensors were not already
-                        started
+                        Duration (in seconds) for the stream to run. Infinite
+                        if not given
+  --heartbeat HEARTBEAT
+                        Heartbeat to print every n seconds when streaming data
+  -v, --verbose         Logging verbosity. Repeat up to three times. Defaults
+                        to only script info being printed
 ```
 
-## Details
-
-The restarting and zeroing of the sensors is mostly copied from the api-example scripts. However, restarting can be
-disabled to save time when the sensors are already ready for field-zeroing.
-
-When sensors fail during field-zeroing, often `soft error` appears somewhere in the console output (not necessarily 
-the very last message).
-
-Since it is unknown how many sensors are connected and started successfully, the script starts the data streaming from
-the sensors before the LSL stream is opened. From the first samples it receives then the number of channel and meta data
-of the stream can be inferred. This info is used to generate the LSL Info object with which the LSLOutput can be opened.
-
-The fConnector-queue is then emptied after opening the LSL Outlet to avoid 'old' samples in the queue.
-Approx. every 10 seconds (every 1000 chunks: 10 samples/chunk @1000 Hz sampling rate), the user is notified about 
-the runtime and the remaining time.
+## Good to know
+Sensors != Channels. In principle, there is currently a 1:1 association, but a sensor (e.g. 00:01) can have different channels (:28 or :50) depending on the mode it's run in.
