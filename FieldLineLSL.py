@@ -49,12 +49,13 @@ class Unit_T_Factor(Enum):
     fT = 1E15  # femtoTesla
 
 
-class FieldLineLSL2(FieldLineService):
+class FieldLineLSL(FieldLineService):
     """
     Instance of FieldLineService to enable streaming of data via LSL
     Initialized with all relevant information for connecting to one or multiple (daisy-chained) chassis.
+    See the readme for further information
     """
-    def __init__(self, ip_list: List[str], stream_name: str = "FieldLineOPM", source_id: str = "FieldLineOPM_Stream",
+    def __init__(self, ip_list: List[str], stream_name: str = "FieldLineOPM", source_id: str = "FieldLineOPM_sid",
                  stream_type='MEG', log_heartbeat: int = 60, unit_T: Unit_T_Factor = Unit_T_Factor.fT, prefix: str = "",):
         """
         Initialize the FieldLineLSL instance
