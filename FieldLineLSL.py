@@ -1,10 +1,17 @@
 #!/usr/bin/env python
 
 """
-FieldLine LSL module
+FieldLine LabStreamingLayer module
+The class contained in this module can be used to automatically stream sensor data from FieldLine OPMs via LSL.
+For more information and requirements, please refer to the readme in
+[https://github.com/jzerfowski/fieldline_lsl](https://github.com/jzerfowski/fieldline_lsl]
 """
 
 __author__ = "Jan Zerfowski"
+__email__ = "research@janzerfowski.de"
+__url__ = "https://github.com/jzerfowski/fieldline_lsl"
+__license__ = "GPL-3.0-only"
+__version__ = "0.3.1"
 
 from enum import Enum
 from queue import Queue, Empty
@@ -17,29 +24,37 @@ from fieldline_api.fieldline_service import FieldLineService
 from fieldline_api.pycore.sensor import ChannelInfo
 
 import pylsl
-logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s:  -  - %(message)s (%(filename)s:%(lineno)d)')
+
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 class FieldLineDataType(Enum):
+    """
+    Represent the three known datatypes in sensor data (the last element XX in sensor names, e.g. 00:01:XX)
+    """
     ADC = '0'
     OPEN_LOOP = '28'
     CLOSED_LOOP = '50'
 
 
-UNIT_T_FACTORS = dict(
-    T=1,
-    mT=1E3,
-    uT=1E6,
-    nT=1E9,
-    pT=1E12,
-    fT=1E15,
-)
+class Unit_T_Factor(Enum):
+    """
+    Represent common orders of magnitude and their factors relative to SI unit Tesla
+    """
+    T = 1
+    mT = 1E3
+    uT = 1E6
+    nT = 1E9
+    pT = 1E12
+    fT = 1E15
+
 
 class FieldLineLSL2(FieldLineService):
+    """
+    Instance of FieldLineService to facilitate streaming of data via LSL
+    """
     def __init__(self, ip_list: List[str], stream_name: str = "FieldLineOPM", source_id: str = "FieldLineOPM_Stream",
-                 prefix: str = "", stream_type='MEG', log_heartbeat: int = 60, unit_T: str = 'fT'):
+                 prefix: str = "", stream_type='MEG', log_heartbeat: int = 60, unit_T: Unit_T_Factor = Unit_T_Factor.fT):
         super().__init__(ip_list=ip_list, prefix=prefix)
 
         # LSL Information provided by user
@@ -54,12 +69,12 @@ class FieldLineLSL2(FieldLineService):
 
         self._channel_names: list = None
 
-        if unit_T not in UNIT_T_FACTORS:
-            logger.warning(f"{unit_T=} is not a known unit. Please provide one of {UNIT_T_FACTORS.keys()}")
-            self.unit_T: str = 'T'
+        if unit_T not in Unit_T_Factor:
+            logger.warning(f"{unit_T=} is not a known unit. Please provide an instance of {Unit_T_Factor}")
+            self.unit_T: Unit_T_Factor = Unit_T_Factor.T
         else:
-            self.unit_T: str = unit_T
-        self.unit_T_factor = UNIT_T_FACTORS[self.unit_T]
+            self.unit_T: Unit_T_Factor = unit_T
+        self.unit_T_factor = self.unit_T.value
 
         self.done: Event = Event()
         self.data_queue: Queue = Queue()
@@ -136,7 +151,7 @@ class FieldLineLSL2(FieldLineService):
         for chassis_id in start_adc_on_chassis:
             super().start_adc(chassis_id)
 
-        stop_adc_on_chassis = list(set(chassis_list)-set(start_adc_on_chassis))
+        stop_adc_on_chassis = list(set(chassis_list) - set(start_adc_on_chassis))
         if stop_adc_on_chassis: logger.info(f"Stopping ADCs on chassis {stop_adc_on_chassis}")
         for chassis_id in stop_adc_on_chassis:
             super().stop_adc(chassis_id)
@@ -158,7 +173,8 @@ class FieldLineLSL2(FieldLineService):
             try:
                 data = self.data_queue.get(block=True, timeout=1)
             except Empty as e:
-                logger.warning(f"No data was received in time by streaming Thread after {now - self.t_stream_start:.1f} (t_local={now})")
+                logger.warning(
+                    f"No data was received in time by streaming Thread after {now - self.t_stream_start:.1f} (t_local={now})")
                 continue
 
             sample_timestamp = data['timestamp']  # We don't use this because LSL generates its own timestamps
@@ -180,7 +196,7 @@ class FieldLineLSL2(FieldLineService):
         self.t_stream_start = None
 
     def get_timestamp(self, chassis_timestamp):
-        return self.first_lsl_timestamp + (chassis_timestamp - self.first_chassis_timestamp)/25000.0
+        return self.first_lsl_timestamp + (chassis_timestamp - self.first_chassis_timestamp) / 25000.0
 
     def start_streaming(self):
         if self.stream_outlet is None:
@@ -294,9 +310,9 @@ class FieldLineLSL2(FieldLineService):
         if self.get_data_type(channel) == FieldLineDataType.ADC:
             channel_dict.update(unit="V", mode="ADC")
         elif self.get_data_type(channel) == FieldLineDataType.CLOSED_LOOP:
-            channel_dict.update(unit=self.unit_T, mode="Closed Loop")
+            channel_dict.update(unit=self.unit_T.name, mode="Closed Loop")
         elif self.get_data_type(channel) == FieldLineDataType.OPEN_LOOP:
-            channel_dict.update(unit=self.unit_T, mode="Open Loop")
+            channel_dict.update(unit=self.unit_T.name, mode="Open Loop")
         else:
             channel_dict.update(unit="?", mode="Unknown")
 
@@ -350,18 +366,3 @@ class FieldLineLSL2(FieldLineService):
             self.first_chassis_timestamp = data['timestamp']
 
         self.data_queue.put(data)
-
-
-if __name__ == '__main__':
-    ip_list = ['192.168.2.43', '192.168.2.44']
-    ip_list = ['192.168.2.43']
-    ip_list = ['192.168.2.44']
-
-
-    fLSL = FieldLineLSL2(ip_list, stream_name="FieldLineOPM_ref", source_id="FieldlineLSL_1_4_41_ref")
-
-    fLSL.open()
-    fLSL.init_sensors(skip_restart=True, skip_zeroing=False, closed_loop_mode=True, adcs=False)
-    fLSL.init_stream()
-
-    fLSL.start_streaming()
