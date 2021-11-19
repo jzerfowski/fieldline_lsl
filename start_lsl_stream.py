@@ -92,27 +92,3 @@ if __name__ == "__main__":
 
     logger.info("Stopping streaming.")
     fLSL.close()
-
-
-
-#
-# logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s:  -  - %(message)s (%(filename)s:%(lineno)d)')
-# logger.setLevel(logging.INFO)
-#
-#
-# import numpy as np
-# import matplotlib.pyplot as plt
-#
-#
-# if __name__ == '__main__':
-#     ip_list = ['192.168.2.43', '192.168.2.44']
-#     ip_list = ['192.168.2.43']
-#     ip_list = ['192.168.2.44']
-#
-#     fLSL = FieldLineLSL2(ip_list, stream_name="FieldLineOPM_ref", source_id="FieldlineLSL_1_4_41_ref")
-#
-#     fLSL.open()
-#     fLSL.init_sensors(skip_restart=True, skip_zeroing=False, closed_loop_mode=True, adcs=False)
-#     fLSL.init_stream()
-#
-#     fLSL.start_streaming()
