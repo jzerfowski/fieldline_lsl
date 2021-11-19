@@ -252,14 +252,14 @@ class FieldLineLSL(FieldLineService):
         :return:
         """
         self.t_stream_start = pylsl.local_clock()
-        last_heartbeat = self.t_stream_start
+        next_heartbeat = self.t_stream_start
         logger.info(f"Starting to stream data on {self.stream_name} at t_local={self.t_stream_start}")
 
         while self.running:
             now = pylsl.local_clock()
 
-            if self.log_heartbeat and last_heartbeat + self.log_heartbeat <= now:
-                last_heartbeat = now
+            if self.log_heartbeat and now >= next_heartbeat:
+                next_heartbeat += self.log_heartbeat
                 logger.info(
                     f"Streaming data on {self.stream_name} since {now - self.t_stream_start:.1f} seconds (t_local={now})")
             try:
