@@ -22,8 +22,8 @@ import importlib.metadata
 
 import pylsl
 
-from fieldline_api.fieldline_service import FieldLineService
-from fieldline_api.pycore.sensor import ChannelInfo
+from fieldline.fieldline_api.fieldline_service import FieldLineService
+from fieldline.pycore.sensor import ChannelInfo
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class FieldLineLSL(FieldLineService):
     See the readme for further information
     """
     def __init__(self, ip_list: List[str], stream_name: str = "FieldLineOPM", source_id: str = "FieldLineOPM_sid",
-                 stream_type='MEG', log_heartbeat: int = 60, unit_T: Unit_T_Factor = Unit_T_Factor.fT, prefix: str = "",):
+                 stream_type='MAG', log_heartbeat: int = 60, unit_T: Unit_T_Factor = Unit_T_Factor.fT, prefix: str = "",):
         """
         Initialize the FieldLineLSL instance
         :param ip_list: List of ip addresses as strings (without ports)
@@ -365,13 +365,13 @@ class FieldLineLSL(FieldLineService):
                             )
 
         if self.get_data_type(channel) == FieldLineDataType.ADC:
-            channel_dict.update(unit="V", mode="ADC")
+            channel_dict.update(type='misc', unit="V", mode="ADC")
         elif self.get_data_type(channel) == FieldLineDataType.CLOSED_LOOP:
-            channel_dict.update(unit=self.unit_T.name, mode="Closed Loop")
+            channel_dict.update(type='mag', unit=self.unit_T.name, mode="Closed Loop")
         elif self.get_data_type(channel) == FieldLineDataType.OPEN_LOOP:
-            channel_dict.update(unit=self.unit_T.name, mode="Open Loop")
+            channel_dict.update(type='mag', unit=self.unit_T.name, mode="Open Loop")
         else:
-            channel_dict.update(unit="?", mode="Unknown")
+            channel_dict.update(type='misc', unit="?", mode="Unknown")
 
         if self.is_OPM_type(channel):
             serial_card, serial_sensor = self.get_serial_numbers(chassis_id, sensor_id)

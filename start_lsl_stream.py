@@ -79,7 +79,7 @@ if __name__ == "__main__":
     logger.info("FieldLineLSL initialized. Calling FieldLineService.open()")
     fLSL.open()  # FieldLineService has to be opened to connect to the chassis
     logger.info("Beginning initialization of sensors")
-    fLSL.init_sensors(skip_restart=~args.not_skip_restart, skip_zeroing=~args.not_skip_zeroing, adcs=args.adc)
+    fLSL.init_sensors(skip_restart=not args.not_skip_restart, skip_zeroing=not args.not_skip_zeroing, adcs=args.adc)
     logger.info("Initialized sensors. Initializing stream")
     fLSL.init_stream()
 
