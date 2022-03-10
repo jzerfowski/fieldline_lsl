@@ -13,6 +13,7 @@ __url__ = "https://github.com/jzerfowski/fieldline_lsl"
 __license__ = "GPL-3.0-only"
 __version__ = "0.3.1"
 
+import time
 from enum import Enum
 from queue import Queue, Empty
 from typing import Union, List
@@ -145,14 +146,19 @@ class FieldLineLSL(FieldLineService):
         elif isinstance(adcs, list):
             start_adc_on_chassis = [chassis_id for chassis_id in adcs if chassis_id in chassis_list]
 
-        if start_adc_on_chassis: logger.info(f"Starting ADCs on chassis {start_adc_on_chassis}")
         for chassis_id in start_adc_on_chassis:
+            logger.info(f"Starting ADCs on chassis {chassis_id}")
             super().start_adc(chassis_id)
 
         stop_adc_on_chassis = list(set(chassis_list) - set(start_adc_on_chassis))
-        if stop_adc_on_chassis: logger.info(f"Stopping ADCs on chassis {stop_adc_on_chassis}")
+
         for chassis_id in stop_adc_on_chassis:
+            logger.info(f"Stopping ADCs on chassis {chassis_id}")
             super().stop_adc(chassis_id)
+
+        if start_adc_on_chassis or stop_adc_on_chassis:
+            # starting and stopping adcs seems to be non-blocking
+            time.sleep(0.5)
 
         return start_adc_on_chassis
 
